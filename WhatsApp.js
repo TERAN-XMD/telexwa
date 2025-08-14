@@ -41,6 +41,69 @@ const prefixRegex = /^[°zZ#$@*+,.?=''():√%!¢£¥€π¤ΠΦ_&><`™©®Δ^β
 const prefix = prefixRegex.test(body) ? body.match(prefixRegex)[0] : '.';
 const isCmd = body.startsWith(prefix);
 const command = isCmd ? body.slice(prefix.length).trim().split(' ').shift().toLowerCase() : '';
+// .send group|message|number
+if (command === 'send' && args.length >= 1) {
+  // Parse: .send Group Name|Message to send|Number
+  const input = budy.slice(budy.indexOf(' ')+1).trim(); // everything after command
+  const [groupName, messageToSend, numStr] = input.split('|').map(x => x.trim());
+  const numLimit = parseInt(numStr);
+
+  if (!groupName || !messageToSend || isNaN(numLimit) || numLimit < 1) {
+    return reply(`Usage:\n.send group name|message|number\nExample:\n.send Friends|Hello everyone!|5`);
+  }
+
+  // Fetch all groups bot is in
+  const allGroups = await trashcore.groupFetchAllParticipating();
+  const groupObj = Object.values(allGroups).find(
+    g => g.subject.toLowerCase() === groupName.toLowerCase()
+  );
+
+  if (!groupObj) {
+    return reply(`❌ Group "${groupName}" not found. Make sure the bot is a member of that group.`);
+  }
+
+  // Get metadata and members
+  const meta = await trashcore.groupMetadata(groupObj.id);
+  const senderId = m.sender;
+  const admins = meta.participants.filter(p => p.admin).map(p => p.id);
+  const members = meta.participants
+    .map(p => p.id)
+    .filter(id => id !== senderId && !admins.includes(id)); // exclude sender & admins
+
+  // Limit to requested num of people
+  const selectedMembers = members.slice(0, numLimit);
+  if (!selectedMembers.length) {
+    return reply(`No eligible members found in "${groupName}".`);
+  }
+
+  let totalSent = 0, totalFail = 0;
+  const startTime = Date.now();
+
+  await reply(`📣 Sending message to ${selectedMembers.length} member(s) in "${groupName}"...`);
+
+  for (let i = 0; i < selectedMembers.length; i++) {
+    const userId = selectedMembers[i];
+    try {
+      // Get profile name (notify)
+      let profile = await trashcore.onWhatsApp(userId);
+      let first = profile[0]?.notify?.split(' ')[0] || userId.split('@')[0];
+      let personalized = messageToSend.replace(/{{name}}/gi, first);
+
+      await trashcore.sendMessage(userId, { text: personalized });
+      totalSent++;
+      await reply(`✅ Sent to ${first} (${userId}) [${i + 1}/${selectedMembers.length}]`);
+      await delay(700); // anti-spam
+    } catch (e) {
+      totalFail++;
+      await reply(`❌ Failed for ${userId} [${i + 1}/${selectedMembers.length}]`);
+    }
+  }
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  await reply(
+    `✅ Broadcast complete!\nGroup: ${groupName}\nTook: ${elapsed}s\n📤 Sent: ${totalSent}\n❌ Failed: ${totalFail}`
+  );
+}
 const args = body.trim().split(/ +/).slice(1)
 const text = q = args.join(" ")
 const sender = m.key.fromMe ? (trashcore.user.id.split(':')[0]+'@s.whatsapp.net' || trashcore.user.id) : (m.key.participant || m.key.remoteJid)
